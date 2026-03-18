@@ -1,0 +1,104 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: daily_intel
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d daily_intel"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    command: uvicorn backend.api.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  parser:
+    build: .
+    command: python -m parser.source_manager
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - TELEGRAM_API_ID=${TELEGRAM_API_ID}
+      - TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
+      - TELEGRAM_PHONE=${TELEGRAM_PHONE}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  scheduler:
+    build: .
+    command: python -m scheduler.jobs
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - MORNING_BRIEF_TIME=${MORNING_BRIEF_TIME:-07:30}
+      - MIDDAY_BRIEF_TIME=${MIDDAY_BRIEF_TIME:-12:30}
+      - EVENING_BRIEF_TIME=${EVENING_BRIEF_TIME:-18:30}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  bot:
+    build: .
+    command: python -m bot.main
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+    depends_on:
+      db:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
