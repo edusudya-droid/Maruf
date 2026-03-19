@@ -11,7 +11,15 @@ from backend.api.routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Daily Intelligence System API...")
+    # Jadvallarni yaratish (mavjud bo'lsa o'tkazib yuboradi)
+    import database.models  # noqa: F401
+    from backend.core.database import engine
+    from database.models import Base as ModelsBase
+    async with engine.begin() as conn:
+        await conn.run_sync(ModelsBase.metadata.create_all)
+    logger.info("Database tables verified")
     yield
+    await engine.dispose()
     logger.info("Shutting down API...")
 
 
