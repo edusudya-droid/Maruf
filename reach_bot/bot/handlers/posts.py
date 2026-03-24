@@ -1,7 +1,10 @@
+import logging
+from datetime import datetime, timezone
+
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, MessageOriginChannel
 
 from app.services.post_service import get_recent_posts
 from bot.keyboards.posts_menu import post_action_keyboard, posts_keyboard
@@ -12,10 +15,13 @@ from bot.utils.message_texts import (
     POSTS_LOADING,
     POST_SELECTED,
 )
+from config import settings as app_settings
 from domain.enums import UserRole, UserStatus
 from infrastructure.database.connection import AsyncSessionLocal
+from infrastructure.repositories.post_repo import PostRepo
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 _ALLOWED_ROLES = {UserRole.SUPERADMIN.value, UserRole.ADMIN.value, UserRole.ANALYST.value}
 
@@ -93,3 +99,46 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
         f"So'nggi <b>{len(posts)}</b> ta post:", reply_markup=kb, parse_mode="HTML"
     )
     await callback.answer()
+
+
+@router.message(F.forward_origin.cast(MessageOriginChannel))
+async def forwarded_post_handler(message: Message, db_user=None) -> None:
+    """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
+    if db_user is None or db_user.role not in _ALLOWED_ROLES:
+        return
+
+    origin = message.forward_origin
+    if not isinstance(origin, MessageOriginChannel):
+        return
+
+    if origin.chat.id != app_settings.official_channel_id:
+        await message.answer(
+            f"Bu post rasmiy kanaldan emas (chat_id={origin.chat.id})."
+        )
+        return
+
+    msg_id = origin.message_id
+    published_at = origin.date if isinstance(origin.date, datetime) else datetime.fromtimestamp(origin.date, tz=timezone.utc)
+    post_url = f"{app_settings.official_channel_url}/{msg_id}"
+    post_text = message.text or message.caption
+
+    async with AsyncSessionLocal() as session:
+        repo = PostRepo(session)
+        channel = await repo.get_or_create_channel(
+            telegram_channel_id=origin.chat.id,
+            channel_title=origin.chat.title or "Official Channel",
+            channel_url=app_settings.official_channel_url,
+        )
+        await repo.upsert(
+            official_channel_id=channel.id,
+            telegram_message_id=msg_id,
+            post_url=post_url,
+            post_text=post_text,
+            published_at=published_at,
+            views_count=None,
+            collected_at=datetime.now(timezone.utc),
+        )
+        await session.commit()
+
+    logger.info("Forward orqali post saqlandi: message_id=%s", msg_id)
+    await message.answer(f"Post saqlandi (message_id={msg_id})")
