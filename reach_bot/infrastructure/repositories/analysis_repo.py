@@ -59,7 +59,7 @@ class AnalysisRepo:
     async def update_status(self, run_id: int, status: str) -> None:
         values: dict = {"status": status}
         if status in ("COMPLETED", "COMPLETED_WITH_SKIPS", "FAILED"):
-            values["finished_at"] = datetime.now(timezone.utc)
+            values["finished_at"] = datetime.utcnow()
         await self.session.execute(
             update(AnalysisRun).where(AnalysisRun.id == run_id).values(**values)
         )
@@ -80,7 +80,7 @@ class AnalysisRepo:
             .where(AnalysisRun.id == run_id)
             .values(
                 status=status,
-                finished_at=datetime.now(timezone.utc),
+                finished_at=datetime.utcnow(),
                 source_views=source_views,
                 confirmed_secondary_views=confirmed_secondary_views,
                 total_confirmed_reach=total_confirmed_reach,
