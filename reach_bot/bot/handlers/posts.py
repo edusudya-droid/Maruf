@@ -153,6 +153,12 @@ async def forwarded_post_handler(message: Message, db_user=None) -> None:
         post_url = f"{app_settings.official_channel_url}/{msg_id}"
         post_text = message.text or message.caption
 
+        # DB TIMESTAMP WITHOUT TIME ZONE uchun naive UTC ga o'tkazamiz
+        def to_naive(dt: datetime) -> datetime:
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+            return dt
+
         async with AsyncSessionLocal() as session:
             repo = PostRepo(session)
             channel = await repo.get_or_create_channel(
@@ -165,9 +171,9 @@ async def forwarded_post_handler(message: Message, db_user=None) -> None:
                 telegram_message_id=msg_id,
                 post_url=post_url,
                 post_text=post_text,
-                published_at=published_at,
+                published_at=to_naive(published_at),
                 views_count=None,
-                collected_at=datetime.now(timezone.utc),
+                collected_at=to_naive(datetime.now(timezone.utc)),
             )
             await session.commit()
 
