@@ -101,7 +101,7 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
     await callback.answer()
 
 
-@router.message(F.forward_origin.cast(MessageOriginChannel))
+@router.message(F.forward_origin.is_not(None))
 async def forwarded_post_handler(message: Message, db_user=None) -> None:
     """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
     if db_user is None or db_user.role not in _ALLOWED_ROLES:
@@ -109,36 +109,48 @@ async def forwarded_post_handler(message: Message, db_user=None) -> None:
 
     origin = message.forward_origin
     if not isinstance(origin, MessageOriginChannel):
+        await message.answer("Faqat kanal postlarini forward qiling.")
         return
 
     if origin.chat.id != app_settings.official_channel_id:
         await message.answer(
-            f"Bu post rasmiy kanaldan emas (chat_id={origin.chat.id})."
+            f"Bu post rasmiy kanaldan emas.\n"
+            f"Kelgan chat_id: <code>{origin.chat.id}</code>\n"
+            f"Kutilgan: <code>{app_settings.official_channel_id}</code>"
         )
         return
 
-    msg_id = origin.message_id
-    published_at = origin.date if isinstance(origin.date, datetime) else datetime.fromtimestamp(origin.date, tz=timezone.utc)
-    post_url = f"{app_settings.official_channel_url}/{msg_id}"
-    post_text = message.text or message.caption
-
-    async with AsyncSessionLocal() as session:
-        repo = PostRepo(session)
-        channel = await repo.get_or_create_channel(
-            telegram_channel_id=origin.chat.id,
-            channel_title=origin.chat.title or "Official Channel",
-            channel_url=app_settings.official_channel_url,
+    try:
+        msg_id = origin.message_id
+        published_at = (
+            origin.date
+            if isinstance(origin.date, datetime)
+            else datetime.fromtimestamp(origin.date, tz=timezone.utc)
         )
-        await repo.upsert(
-            official_channel_id=channel.id,
-            telegram_message_id=msg_id,
-            post_url=post_url,
-            post_text=post_text,
-            published_at=published_at,
-            views_count=None,
-            collected_at=datetime.now(timezone.utc),
-        )
-        await session.commit()
+        post_url = f"{app_settings.official_channel_url}/{msg_id}"
+        post_text = message.text or message.caption
 
-    logger.info("Forward orqali post saqlandi: message_id=%s", msg_id)
-    await message.answer(f"Post saqlandi (message_id={msg_id})")
+        async with AsyncSessionLocal() as session:
+            repo = PostRepo(session)
+            channel = await repo.get_or_create_channel(
+                telegram_channel_id=origin.chat.id,
+                channel_title=origin.chat.title or "Official Channel",
+                channel_url=app_settings.official_channel_url,
+            )
+            await repo.upsert(
+                official_channel_id=channel.id,
+                telegram_message_id=msg_id,
+                post_url=post_url,
+                post_text=post_text,
+                published_at=published_at,
+                views_count=None,
+                collected_at=datetime.now(timezone.utc),
+            )
+            await session.commit()
+
+        logger.info("Forward orqali post saqlandi: message_id=%s", msg_id)
+        await message.answer(f"Post saqlandi (message_id={msg_id})")
+
+    except Exception as exc:
+        logger.exception("Forward post saqlashda xato: %s", exc)
+        await message.answer(f"Xato yuz berdi: {exc}")
