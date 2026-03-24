@@ -1,3 +1,5 @@
+from datetime import timezone, timedelta
+
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -6,6 +8,8 @@ from bot.utils.message_texts import ACCESS_DENIED, PERMISSION_DENIED
 from domain.enums import UserRole, UserStatus
 from infrastructure.database.connection import AsyncSessionLocal
 from infrastructure.repositories.log_repo import AuditLogRepo
+
+_TZ = timezone(timedelta(hours=5))
 
 router = Router()
 
@@ -34,7 +38,7 @@ async def logs_handler(message: Message, db_user=None) -> None:
 
     lines = ["<b>OXIRGI LOGLAR</b>\n"]
     for log in logs:
-        dt = log.created_at.strftime("%Y-%m-%d %H:%M")
+        dt = log.created_at.replace(tzinfo=timezone.utc).astimezone(_TZ).strftime("%Y-%m-%d %H:%M")
         obj = f"{log.object_type}:{log.object_id}" if log.object_type else ""
         lines.append(f"🔹 <code>{dt}</code> | {log.action_type} {obj}")
         if log.details:
