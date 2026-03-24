@@ -104,7 +104,12 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
 @router.message(F.forward_origin.is_not(None))
 async def forwarded_post_handler(message: Message, db_user=None) -> None:
     """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
-    if db_user is None or db_user.role not in _ALLOWED_ROLES:
+    logger.info("forwarded_post_handler chaqirildi, db_user=%s", db_user)
+    if db_user is None:
+        await message.answer("[DEBUG] db_user topilmadi — siz DBda ro'yxatdan o'tmagan bo'lishingiz mumkin.")
+        return
+    if db_user.role not in _ALLOWED_ROLES:
+        await message.answer(f"[DEBUG] Ruxsat yo'q. Rolingiz: {db_user.role}")
         return
 
     origin = message.forward_origin
