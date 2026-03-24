@@ -10,19 +10,19 @@ def main_menu_keyboard(role: str) -> ReplyKeyboardMarkup:
     r = UserRole(role)
 
     # All roles
-    builder.button(text="📋 Hisobotlar /report")
-    builder.button(text="📜 Tarix /history")
+    builder.button(text="/report")
+    builder.button(text="/history")
 
     if r in (UserRole.SUPERADMIN, UserRole.ADMIN, UserRole.ANALYST):
-        builder.button(text="📰 Postlar /posts")
-        builder.button(text="🔍 Analiz /analyze")
+        builder.button(text="/posts")
+        builder.button(text="/analyze")
 
     if r in (UserRole.SUPERADMIN, UserRole.ADMIN):
-        builder.button(text="⚙️ Sozlamalar /settings")
-        builder.button(text="📝 Loglar /logs")
+        builder.button(text="/settings")
+        builder.button(text="/logs")
 
     if r == UserRole.SUPERADMIN:
-        builder.button(text="👥 Foydalanuvchilar /users")
+        builder.button(text="/users")
 
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
