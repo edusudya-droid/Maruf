@@ -6,7 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 
-from bot.handlers import admin, analyze, history, logs, posts, report, settings, start
+from bot.handlers import admin, analyze, channel_listener, history, logs, posts, report, settings, start
 from bot.middlewares.auth_middleware import AuthMiddleware
 from config import settings as app_settings
 
@@ -30,6 +30,7 @@ async def main() -> None:
     dp.update.middleware(AuthMiddleware())
 
     # Register routers
+    dp.include_router(channel_listener.router)
     dp.include_router(start.router)
     dp.include_router(posts.router)
     dp.include_router(analyze.router)

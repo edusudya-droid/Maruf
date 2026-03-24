@@ -75,11 +75,18 @@ async def fetch_and_store_recent_posts(session: AsyncSession, bot: Bot) -> dict:
 async def get_recent_posts(session: AsyncSession) -> dict:
     """Return recent posts from DB (already stored)."""
     repo = PostRepo(session)
-    channel_id = app_settings.official_channel_id
 
     channel = await repo.get_active_channel()
     if not channel:
-        return err(OfficialChannelNotConfiguredError())
+        try:
+            channel = await repo.get_or_create_channel(
+                telegram_channel_id=app_settings.official_channel_id,
+                channel_title="Official Channel",
+                channel_url=app_settings.official_channel_url,
+            )
+            await session.commit()
+        except Exception as exc:
+            return err(OfficialChannelNotConfiguredError(str(exc)))
 
     posts = await repo.list_recent(channel.id, limit=app_settings.max_visible_posts)
     return ok(data=posts)
