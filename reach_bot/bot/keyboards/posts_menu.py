@@ -1,3 +1,4 @@
+from datetime import timezone, timedelta
 from typing import List
 
 from aiogram.types import InlineKeyboardMarkup
@@ -5,11 +6,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from infrastructure.database.models import SourcePost
 
+TASHKENT = timezone(timedelta(hours=5))
+
 
 def posts_keyboard(posts: List[SourcePost]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for post in posts:
-        date_str = post.published_at.strftime("%Y-%m-%d %H:%M")
+        dt = post.published_at.replace(tzinfo=timezone.utc).astimezone(TASHKENT)
+        date_str = dt.strftime("%Y-%m-%d %H:%M")
         short_text = (post.post_text or "")[:100].replace("\n", " ")
         views = f"{post.views_count:,}" if post.views_count else "?"
         label = f"📅 {date_str} | 👁{views} | {short_text}..."
