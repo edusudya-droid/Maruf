@@ -2,9 +2,14 @@ import logging
 from datetime import datetime, timezone
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import BaseFilter, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, MessageOriginChannel
+
+
+class IsForwardedFromChannel(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return isinstance(getattr(message, "forward_origin", None), MessageOriginChannel)
 
 from app.services.post_service import get_recent_posts
 from bot.keyboards.posts_menu import post_action_keyboard, posts_keyboard
@@ -101,7 +106,7 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
     await callback.answer()
 
 
-@router.message(F.forward_origin)
+@router.message(IsForwardedFromChannel())
 async def forwarded_post_handler(message: Message, db_user=None) -> None:
     """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
     logger.info("forwarded_post_handler chaqirildi, db_user=%s", db_user)
