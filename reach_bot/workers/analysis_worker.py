@@ -16,7 +16,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from config import settings as app_settings
 from domain.algorithms.confirmation_classifier import classify
@@ -30,7 +31,6 @@ from domain.exceptions import (
     EmptySourceTextError,
     LowSimilarityError,
 )
-from infrastructure.database.connection import AsyncSessionLocal
 from infrastructure.repositories.analysis_repo import AnalysisRepo
 from infrastructure.repositories.detected_post_repo import DetectedPostRepo
 from infrastructure.repositories.log_repo import AuditLogRepo, ErrorLogRepo
@@ -48,8 +48,14 @@ def run_analysis(self, analysis_run_id: int) -> None:
 
 
 async def _run_analysis_async(analysis_run_id: int) -> None:
-    async with AsyncSessionLocal() as session:
-        await _execute(analysis_run_id, session)
+    # Create a fresh engine per task to avoid "Future attached to different loop" error
+    engine = create_async_engine(app_settings.database_url, poolclass=NullPool)
+    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    try:
+        async with session_factory() as session:
+            await _execute(analysis_run_id, session)
+    finally:
+        await engine.dispose()
 
 
 async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa: C901
