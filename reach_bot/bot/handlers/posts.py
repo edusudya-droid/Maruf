@@ -101,7 +101,7 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
     await callback.answer()
 
 
-@router.message(F.forward_origin.is_not(None))
+@router.message(F.forward_origin)
 async def forwarded_post_handler(message: Message, db_user=None) -> None:
     """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
     logger.info("forwarded_post_handler chaqirildi, db_user=%s", db_user)
