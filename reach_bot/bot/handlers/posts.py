@@ -6,12 +6,6 @@ from aiogram.filters import BaseFilter, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, MessageOriginChannel
 
-
-class IsForwardedFromChannel(BaseFilter):
-    async def __call__(self, message: Message) -> bool:
-        return True  # DEBUG: hamma xabarni ushlaydi
-
-
 from app.services.post_service import get_recent_posts
 from bot.keyboards.posts_menu import post_action_keyboard, posts_keyboard
 from bot.utils.message_texts import (
@@ -30,6 +24,15 @@ router = Router()
 logger = logging.getLogger(__name__)
 
 _ALLOWED_ROLES = {UserRole.SUPERADMIN.value, UserRole.ADMIN.value, UserRole.ANALYST.value}
+
+
+class IsForwardedFromChannel(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        if isinstance(getattr(message, "forward_origin", None), MessageOriginChannel):
+            return True
+        if getattr(message, "forward_from_chat", None) is not None:
+            return True
+        return False
 
 
 @router.message(Command("posts"))
@@ -108,10 +111,69 @@ async def back_to_posts_callback(callback: CallbackQuery, db_user=None) -> None:
 
 @router.message(IsForwardedFromChannel())
 async def forwarded_post_handler(message: Message, db_user=None) -> None:
-    """DEBUG: har qanday xabarda forward fieldlarini ko'rsat."""
-    await message.answer(
-        f"[DEBUG] Handler ishladi!\n"
-        f"forward_origin={getattr(message, 'forward_origin', 'YOQ')}\n"
-        f"forward_from_chat={getattr(message, 'forward_from_chat', 'YOQ')}\n"
-        f"db_user={db_user}"
-    )
+    """Admin kanaldan post forward qilsa — bazaga saqlaydi."""
+    if db_user is None or db_user.role not in _ALLOWED_ROLES:
+        await message.answer("Ruxsat yo'q.", parse_mode=None)
+        return
+
+    try:
+        origin = getattr(message, "forward_origin", None)
+        forward_chat = getattr(message, "forward_from_chat", None)
+
+        if origin is not None and isinstance(origin, MessageOriginChannel):
+            channel_id = origin.chat.id
+            msg_id = origin.message_id
+            channel_title = origin.chat.title or "Official Channel"
+            published_at = (
+                origin.date if isinstance(origin.date, datetime)
+                else datetime.fromtimestamp(origin.date, tz=timezone.utc)
+            )
+        elif forward_chat is not None:
+            channel_id = forward_chat.id
+            msg_id = getattr(message, "forward_from_message_id", None) or message.message_id
+            channel_title = forward_chat.title or "Official Channel"
+            fwd_date = getattr(message, "forward_date", None)
+            published_at = (
+                fwd_date if isinstance(fwd_date, datetime)
+                else datetime.fromtimestamp(fwd_date, tz=timezone.utc)
+            ) if fwd_date else datetime.now(timezone.utc)
+        else:
+            await message.answer("Forward ma'lumoti topilmadi.", parse_mode=None)
+            return
+
+        if channel_id != app_settings.official_channel_id:
+            await message.answer(
+                f"Bu post rasmiy kanaldan emas.\n"
+                f"Kelgan: {channel_id}\n"
+                f"Kutilgan: {app_settings.official_channel_id}",
+                parse_mode=None,
+            )
+            return
+
+        post_url = f"{app_settings.official_channel_url}/{msg_id}"
+        post_text = message.text or message.caption
+
+        async with AsyncSessionLocal() as session:
+            repo = PostRepo(session)
+            channel = await repo.get_or_create_channel(
+                telegram_channel_id=channel_id,
+                channel_title=channel_title,
+                channel_url=app_settings.official_channel_url,
+            )
+            await repo.upsert(
+                official_channel_id=channel.id,
+                telegram_message_id=msg_id,
+                post_url=post_url,
+                post_text=post_text,
+                published_at=published_at,
+                views_count=None,
+                collected_at=datetime.now(timezone.utc),
+            )
+            await session.commit()
+
+        logger.info("Forward orqali post saqlandi: message_id=%s", msg_id)
+        await message.answer(f"Post saqlandi (message_id={msg_id})", parse_mode=None)
+
+    except Exception as exc:
+        logger.exception("Forward post saqlashda xato: %s", exc)
+        await message.answer(f"Xato: {exc}", parse_mode=None)
