@@ -95,8 +95,6 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
                     "Manba post topilmadi")
         return
 
-    source_views = source_post.views_count or 0
-
     try:
         normalized_source = normalize(source_post.post_text or "")
     except AppError:
@@ -104,14 +102,16 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
 
     dedup = Deduplicator()
 
-    # BOSQICH 3: Nomzodlarni yig'ish
-    # NOTE: Real implementation requires Telethon/Telegram client for full search.
-    # Here we implement the framework; actual forward/search calls are stubbed
-    # and should be replaced with real Telegram client calls in production.
+    # BOSQICH 3: Nomzodlarni yig'ish + source post views yangilash
+    # _collect_candidates Telethon orqali haqiqiy views ni oladi va
+    # source_post.views_count ni yangilaydi — shuning uchun KEYIN o'qiymiz.
     candidates = await _collect_candidates(
         source_post=source_post,
         session=session,
     )
+
+    # views _collect_candidates tomonidan yangilangan bo'lishi mumkin
+    source_views = source_post.views_count or 0
 
     counted_views = 0
     counted_count = 0
@@ -331,17 +331,75 @@ async def _process_candidate(  # noqa: C901
 
 async def _collect_candidates(source_post, session: AsyncSession) -> List[Dict[str, Any]]:
     """
-    Collect candidate posts through 4 methods (priority order):
-    1. Forwards/reposts via Bot API
-    2. Posts containing source link
-    3. Full text copies
-    4. Near-full text copies
+    Nomzod postlarni yig'adi:
+    1. Rasmiy kanalda manba postning haqiqiy views sonini Telethon orqali oladi
+       va source_post.views_count ni yangilaydi (Bot API buni qaytarmaydi).
+    2. Bot a'zo bo'lgan barcha kanallarda berilgan postning forwardlarini qidiradi.
 
-    NOTE: Full implementation requires Telegram client (Telethon/Pyrogram).
-    This returns an empty list in the base implementation.
-    Replace this function with real Telegram search calls in production.
+    Agar Telethon sozlanmagan bo'lsa — bo'sh list qaytaradi.
     """
-    return []
+    from infrastructure.telegram.client import is_telethon_configured, make_telethon_client
+    from infrastructure.telegram.repost_finder import find_reposts, get_message_views
+
+    if not is_telethon_configured():
+        logger.warning(
+            "Telethon sozlanmagan (TELEGRAM_API_ID / TELEGRAM_API_HASH / TELETHON_SESSION) "
+            "— candidates bo'sh qaytarildi."
+        )
+        return []
+
+    # Rasmiy kanal ma'lumotlarini yuklash
+    from sqlalchemy import select as sa_select
+    from infrastructure.database.models import OfficialChannel
+
+    result = await session.execute(
+        sa_select(OfficialChannel).where(
+            OfficialChannel.id == source_post.official_channel_id
+        )
+    )
+    official_channel = result.scalar_one_or_none()
+    if not official_channel:
+        logger.error(
+            "OfficialChannel topilmadi: id=%s", source_post.official_channel_id
+        )
+        return []
+
+    channel_bot_api_id = official_channel.telegram_channel_id
+
+    client = make_telethon_client()
+    await client.connect()
+
+    try:
+        if not await client.is_user_authorized():
+            logger.error(
+                "Telethon session yaroqsiz. "
+                "Qayta autentifikatsiya: "
+                "docker-compose run --rm bot python -m infrastructure.telegram.generate_session"
+            )
+            return []
+
+        # 1. Haqiqiy views sonini olish va yangilash
+        views = await get_message_views(
+            client, channel_bot_api_id, source_post.telegram_message_id
+        )
+        if views is not None and views > (source_post.views_count or 0):
+            source_post.views_count = views
+            await session.flush()
+            logger.info(
+                "Source post views yangilandi: message_id=%s, views=%s",
+                source_post.telegram_message_id, views,
+            )
+
+        # 2. Repostlarni qidirish
+        candidates = await find_reposts(
+            client=client,
+            official_channel_bot_api_id=channel_bot_api_id,
+            source_message_id=source_post.telegram_message_id,
+        )
+        return candidates
+
+    finally:
+        await client.disconnect()
 
 
 async def _fail(

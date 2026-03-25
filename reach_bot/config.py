@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -31,6 +33,13 @@ class Settings(BaseSettings):
     max_daily_analyses: int = Field(default=20, alias="MAX_DAILY_ANALYSES")
     max_visible_posts: int = Field(default=20, alias="MAX_VISIBLE_POSTS")
     max_users: int = Field(default=50)
+
+    # Telethon (MTProto user client) — ixtiyoriy.
+    # Olish: https://my.telegram.org → API development tools
+    telegram_api_id: Optional[int] = Field(default=None, alias="TELEGRAM_API_ID")
+    telegram_api_hash: Optional[str] = Field(default=None, alias="TELEGRAM_API_HASH")
+    # Session string: bir marta generate_session.py orqali olinadi
+    telethon_session: Optional[str] = Field(default=None, alias="TELETHON_SESSION")
 
 
 settings = Settings()

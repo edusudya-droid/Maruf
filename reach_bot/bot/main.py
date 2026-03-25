@@ -40,8 +40,23 @@ async def main() -> None:
     dp.include_router(settings.router)
     dp.include_router(admin.router)
 
+    tasks = [
+        dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types()),
+    ]
+
+    # Telethon kanal monitoru — sozlangan bo'lsa parallel ishlatiladi
+    if app_settings.telegram_api_id and app_settings.telethon_session:
+        from infrastructure.telegram.monitor import start_channel_monitor
+        tasks.append(start_channel_monitor())
+        logger.info("Telethon kanal monitoru ulandi.")
+    else:
+        logger.info(
+            "Telethon sozlanmagan — faqat Bot API ishlatiladi "
+            "(views=0 bo'lishi mumkin)."
+        )
+
     logger.info("Bot ishga tushmoqda...")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
