@@ -71,6 +71,8 @@ async def report_handler(message: Message, db_user=None, state: FSMContext = Non
         total_confirmed_reach=data["total_confirmed_reach"],
         skipped_posts_count=data["skipped_posts_count"],
         finished_at=finished_at,
+        status=data.get("status", "COMPLETED"),
+        notes=data.get("notes", ""),
     )
     await message.answer(text, parse_mode="HTML")
 
@@ -126,6 +128,7 @@ async def details_handler(message: Message, db_user=None, state: FSMContext = No
             views_count=dp["views_count"],
             confirmation_type=dp["confirmation_type"],
             skip_reason=dp["skip_reason"],
+            discovery_method=dp.get("discovery_method", ""),
         )
         lines.append(line)
 
@@ -175,6 +178,8 @@ async def view_report_callback(callback: CallbackQuery, db_user=None, state: FSM
         total_confirmed_reach=data["total_confirmed_reach"],
         skipped_posts_count=data["skipped_posts_count"],
         finished_at=finished_at,
+        status=data.get("status", "COMPLETED"),
+        notes=data.get("notes", ""),
     )
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()

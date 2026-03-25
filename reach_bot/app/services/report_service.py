@@ -24,6 +24,7 @@ async def get_report(analysis_run_id: int, session: AsyncSession) -> dict:
         "skipped_posts_count": run.skipped_posts_count,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
         "status": run.status,
+        "notes": run.notes or "",
     })
 
 
@@ -60,6 +61,7 @@ async def get_detailed_report(analysis_run_id: int, session: AsyncSession) -> di
                 "text_similarity_score": float(dp.text_similarity_score)
                 if dp.text_similarity_score else None,
                 "external_channel_name": dp.external_channel_name,
+                "discovery_method": dp.discovery_method or "",
             }
             for dp in detected
         ],

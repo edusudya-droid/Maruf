@@ -2,8 +2,8 @@
 Analysis worker — 9-bosqich algoritm.
 
 BOSQICH 1:  Manba postni olish
-BOSQICH 2:  analysis_run yaratish → PENDING → RUNNING
-BOSQICH 3:  Nomzodlarni yig'ish (4 usul)
+BOSQICH 2:  analysis_run PENDING → RUNNING
+BOSQICH 3:  Nomzodlarni yig'ish (4 usul: FORWARD, SOURCE_LINK, TEXT_COPY, NEAR_TEXT_COPY)
 BOSQICH 4:  Matn normalizatsiyasi
 BOSQICH 5:  Mavjudlikni tekshirish
 BOSQICH 6:  Tasdiqlash turini belgilash
@@ -14,7 +14,7 @@ BOSQICH 9:  Natijani hisoblash va yozish
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
@@ -48,9 +48,10 @@ def run_analysis(self, analysis_run_id: int) -> None:
 
 
 async def _run_analysis_async(analysis_run_id: int) -> None:
-    # Create a fresh engine per task to avoid "Future attached to different loop" error
     engine = create_async_engine(app_settings.database_url, poolclass=NullPool)
-    session_factory = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    session_factory = async_sessionmaker(
+        bind=engine, class_=AsyncSession, expire_on_commit=False
+    )
     try:
         async with session_factory() as session:
             await _execute(analysis_run_id, session)
@@ -66,7 +67,6 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
     settings_repo = SettingsRepo(session)
     audit_repo = AuditLogRepo(session)
 
-    # Load dynamic settings
     similarity_threshold = float(
         await settings_repo.get_value(
             "near_full_similarity_threshold",
@@ -91,9 +91,18 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
     # BOSQICH 1: Manba postni olish
     source_post = await post_repo.get_by_id(run.source_post_id)
     if not source_post:
-        await _fail(analysis_repo, error_repo, session, analysis_run_id, "POST_NOT_FOUND",
-                    "Manba post topilmadi")
+        await _fail(
+            analysis_repo, error_repo, session, analysis_run_id,
+            "POST_NOT_FOUND", "Manba post topilmadi",
+        )
         return
+
+    logger.info(
+        "Analiz boshlandi: run_id=%d, post_id=%d, url=%s",
+        analysis_run_id,
+        source_post.id,
+        source_post.post_url,
+    )
 
     try:
         normalized_source = normalize(source_post.post_text or "")
@@ -102,16 +111,26 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
 
     dedup = Deduplicator()
 
-    # BOSQICH 3: Nomzodlarni yig'ish + source post views yangilash
-    # _collect_candidates Telethon orqali haqiqiy views ni oladi va
-    # source_post.views_count ni yangilaydi — shuning uchun KEYIN o'qiymiz.
-    candidates = await _collect_candidates(
+    # BOSQICH 3: Nomzodlarni yig'ish
+    # _collect_candidates:
+    #   - Telethon orqali haqiqiy views sonini oladi → source_post.views_count yangilanadi
+    #   - 4 ta usul bilan repostlarni qidiradi
+    #   - Notes qaytaradi (qidiruv natijalari haqida xabar)
+    candidates, search_notes = await _collect_candidates(
         source_post=source_post,
         session=session,
+        similarity_threshold=similarity_threshold,
     )
 
     # views _collect_candidates tomonidan yangilangan bo'lishi mumkin
     source_views = source_post.views_count or 0
+
+    logger.info(
+        "Nomzodlar yig'ildi: %d ta | source_views=%d | %s",
+        len(candidates),
+        source_views,
+        search_notes,
+    )
 
     counted_views = 0
     counted_count = 0
@@ -148,12 +167,16 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
     # BOSQICH 9: Natijani hisoblash
     total_reach = source_views + counted_views
 
-    if skipped_count == 0:
-        final_status = "COMPLETED"
-    elif counted_count == 0 and skipped_count > 0 and len(candidates) == 0:
-        final_status = "COMPLETED"
+    # Status farqlash:
+    # COMPLETED          — hamma narsa OK (0 natija ham normal)
+    # COMPLETED_WITH_SKIPS — ba'zi nomzodlar o'tkazib yuborildi
+    # FAILED             — Telethon ulanmadi yoki jiddiy xato
+    if "xato" in search_notes.lower() or "yaroqsiz" in search_notes.lower():
+        final_status = "COMPLETED_WITH_SKIPS"
+    elif skipped_count > 0 and counted_count > 0:
+        final_status = "COMPLETED_WITH_SKIPS"
     else:
-        final_status = "COMPLETED_WITH_SKIPS" if skipped_count > 0 else "COMPLETED"
+        final_status = "COMPLETED"
 
     await analysis_repo.update_results(
         run_id=analysis_run_id,
@@ -163,16 +186,28 @@ async def _execute(analysis_run_id: int, session: AsyncSession) -> None:  # noqa
         total_confirmed_reach=total_reach,
         counted_posts_count=counted_count,
         skipped_posts_count=skipped_count,
+        notes=search_notes,
     )
     await audit_repo.create(
         action_type="ANALYSIS_COMPLETED",
         user_id=run.started_by_user_id,
         object_type="AnalysisRun",
         object_id=str(analysis_run_id),
-        details=f"status={final_status}, reach={total_reach}",
+        details=(
+            f"status={final_status}, reach={total_reach}, "
+            f"counted={counted_count}, skipped={skipped_count}"
+        ),
     )
     await session.commit()
-    logger.info("AnalysisRun %d tugadi: %s, reach=%d", analysis_run_id, final_status, total_reach)
+    logger.info(
+        "AnalysisRun %d tugadi: %s | reach=%d, counted=%d, skipped=%d | %s",
+        analysis_run_id,
+        final_status,
+        total_reach,
+        counted_count,
+        skipped_count,
+        search_notes,
+    )
 
 
 async def _process_candidate(  # noqa: C901
@@ -191,6 +226,7 @@ async def _process_candidate(  # noqa: C901
 
     post_url = candidate.get("post_url")
     channel_id = candidate.get("channel_id")
+    channel_username = candidate.get("channel_username")
     message_id = candidate.get("message_id")
     candidate_text = candidate.get("text")
     views_count = candidate.get("views_count")
@@ -198,6 +234,8 @@ async def _process_candidate(  # noqa: C901
     is_forward = candidate.get("is_forward", False)
     has_source_link = candidate.get("has_source_link", False)
     published_at = candidate.get("published_at")
+    discovery_method = candidate.get("discovery_method")
+    raw_metadata = candidate.get("raw_metadata")
 
     # BOSQICH 8: Deduplikatsiya
     if dedup.is_duplicate(
@@ -217,6 +255,9 @@ async def _process_candidate(  # noqa: C901
             views_count=views_count,
             skip_reason="SKIPPED_DUPLICATE",
             published_at=published_at,
+            discovery_method=discovery_method,
+            channel_username=channel_username,
+            raw_metadata=raw_metadata,
         )
         await session.flush()
         return "SKIPPED_DUPLICATE"
@@ -236,11 +277,13 @@ async def _process_candidate(  # noqa: C901
                 post_url=post_url,
                 skip_reason="Kanal yopiq yoki post o'chirilgan",
                 published_at=published_at,
+                discovery_method=discovery_method,
+                channel_username=channel_username,
             )
             await session.flush()
             return "SKIPPED_UNAVAILABLE"
 
-    # No views
+    # Ko'rishlar yo'q
     if views_count is None or views_count == 0:
         await detected_repo.create(
             analysis_run_id=analysis_run_id,
@@ -253,6 +296,9 @@ async def _process_candidate(  # noqa: C901
             views_count=views_count,
             skip_reason="Ko'rishlar ma'lumoti yo'q",
             published_at=published_at,
+            discovery_method=discovery_method,
+            channel_username=channel_username,
+            raw_metadata=raw_metadata,
         )
         await session.flush()
         return "SKIPPED_NO_VIEWS"
@@ -281,7 +327,6 @@ async def _process_candidate(  # noqa: C901
     )
 
     if confirmation is None:
-        # Low similarity or unconfirmed
         status = (
             DetectedPostStatus.SKIPPED_LOW_SIMILARITY.value
             if score is not None and score < similarity_threshold
@@ -300,6 +345,9 @@ async def _process_candidate(  # noqa: C901
             text_similarity_score=score,
             skip_reason=status,
             published_at=published_at,
+            discovery_method=discovery_method,
+            channel_username=channel_username,
+            raw_metadata=raw_metadata,
         )
         await session.flush()
         return status
@@ -324,29 +372,35 @@ async def _process_candidate(  # noqa: C901
         confirmation_type=confirmation.value,
         text_similarity_score=score,
         published_at=published_at,
+        discovery_method=discovery_method,
+        channel_username=channel_username,
+        raw_metadata=raw_metadata,
     )
     await session.flush()
     return "COUNTED"
 
 
-async def _collect_candidates(source_post, session: AsyncSession) -> List[Dict[str, Any]]:
+async def _collect_candidates(
+    source_post,
+    session: AsyncSession,
+    similarity_threshold: float = 0.90,
+) -> Tuple[List[Dict[str, Any]], str]:
     """
-    Nomzod postlarni yig'adi:
-    1. Rasmiy kanalda manba postning haqiqiy views sonini Telethon orqali oladi
-       va source_post.views_count ni yangilaydi (Bot API buni qaytarmaydi).
-    2. Bot a'zo bo'lgan barcha kanallarda berilgan postning forwardlarini qidiradi.
+    Nomzod postlarni 4 ta usul bilan yig'adi.
 
-    Agar Telethon sozlanmagan bo'lsa — bo'sh list qaytaradi.
+    Qaytaradi: (candidates_list, notes_str)
+    - notes_str — hisobotda ko'rsatiladigan izoh
     """
     from infrastructure.telegram.client import is_telethon_configured, make_telethon_client
-    from infrastructure.telegram.repost_finder import find_reposts, get_message_views
+    from infrastructure.telegram.repost_finder import get_message_views
+    from infrastructure.telegram.search_service import SearchService
 
     if not is_telethon_configured():
         logger.warning(
             "Telethon sozlanmagan (TELEGRAM_API_ID / TELEGRAM_API_HASH / TELETHON_SESSION) "
-            "— candidates bo'sh qaytarildi."
+            "— repost qidirish amalga oshirilmadi."
         )
-        return []
+        return [], "Telethon sozlanmagan — repost qidirish mavjud emas. Faqat manba post ko'rishlari hisoblandi."
 
     # Rasmiy kanal ma'lumotlarini yuklash
     from sqlalchemy import select as sa_select
@@ -359,47 +413,61 @@ async def _collect_candidates(source_post, session: AsyncSession) -> List[Dict[s
     )
     official_channel = result.scalar_one_or_none()
     if not official_channel:
-        logger.error(
-            "OfficialChannel topilmadi: id=%s", source_post.official_channel_id
-        )
-        return []
+        logger.error("OfficialChannel topilmadi: id=%s", source_post.official_channel_id)
+        return [], "OfficialChannel bazada topilmadi — qidiruv amalga oshirilmadi."
 
     channel_bot_api_id = official_channel.telegram_channel_id
 
     client = make_telethon_client()
-    await client.connect()
 
     try:
+        await client.connect()
         if not await client.is_user_authorized():
-            logger.error(
-                "Telethon session yaroqsiz. "
-                "Qayta autentifikatsiya: "
-                "docker-compose run --rm bot python -m infrastructure.telegram.generate_session"
-            )
-            return []
+            logger.error("Telethon session yaroqsiz yoki muddati o'tgan.")
+            return [], "Telethon session yaroqsiz — qayta autentifikatsiya kerak."
 
-        # 1. Haqiqiy views sonini olish va yangilash
-        views = await get_message_views(
-            client, channel_bot_api_id, source_post.telegram_message_id
-        )
+        # 1. Manba post ko'rishlarini yangilash
+        views = await get_message_views(client, channel_bot_api_id, source_post.telegram_message_id)
         if views is not None and views > (source_post.views_count or 0):
             source_post.views_count = views
             await session.flush()
             logger.info(
-                "Source post views yangilandi: message_id=%s, views=%s",
-                source_post.telegram_message_id, views,
+                "Source post views yangilandi: message_id=%s, views=%s → %s",
+                source_post.telegram_message_id,
+                source_post.views_count,
+                views,
             )
 
-        # 2. Repostlarni qidirish
-        candidates = await find_reposts(
+        # 2. 4 ta usul bilan repostlarni qidirish
+        search = SearchService(
             client=client,
             official_channel_bot_api_id=channel_bot_api_id,
             source_message_id=source_post.telegram_message_id,
+            source_text=source_post.post_text or "",
+            official_channel_url=official_channel.channel_url,
+            source_message_url=source_post.post_url,
+            similarity_threshold=similarity_threshold,
         )
-        return candidates
+        candidates, method_counts = await search.search_all()
+
+        notes = (
+            f"Qidiruv: {sum(method_counts.values())} ta repost topildi | "
+            f"FORWARD={method_counts.get('PUBLIC_FORWARD', 0)}, "
+            f"SOURCE_LINK={method_counts.get('SOURCE_LINK', 0)}, "
+            f"TEXT_COPY={method_counts.get('TEXT_COPY', 0)}, "
+            f"NEAR_COPY={method_counts.get('NEAR_TEXT_COPY', 0)}"
+        )
+        return candidates, notes
+
+    except Exception as exc:
+        logger.exception("Telethon qidiruv xatosi: %s", exc)
+        return [], f"Telethon qidiruvda xato yuz berdi: {type(exc).__name__}"
 
     finally:
-        await client.disconnect()
+        try:
+            await client.disconnect()
+        except Exception:
+            pass
 
 
 async def _fail(

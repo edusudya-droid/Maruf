@@ -46,6 +46,12 @@ USER_ROLE_CHANGED = "Foydalanuvchi roli o'zgartirildi."
 ERROR_OCCURRED = "Xato yuz berdi. Iltimos qayta urinib ko'ring."
 CANCEL = "Bekor qilindi."
 
+_STATUS_LABELS = {
+    "COMPLETED": "✅ Muvaffaqiyatli",
+    "COMPLETED_WITH_SKIPS": "⚠️ Qisman (ba'zi postlar o'tkazib yuborildi)",
+    "FAILED": "❌ Xato bilan tugadi",
+}
+
 
 def format_report(
     post_url: str,
@@ -55,17 +61,41 @@ def format_report(
     total_confirmed_reach: int,
     skipped_posts_count: int,
     finished_at: str,
+    status: str = "COMPLETED",
+    notes: str = "",
 ) -> str:
+    status_label = _STATUS_LABELS.get(status, status)
+
+    # Nol natijalarga izoh
+    if counted_posts_count == 0 and source_views == 0:
+        reach_comment = (
+            "\n⚠️ <i>Ko'rishlar va repostlar aniqlanmadi. "
+            "Telethon sozlanganligini tekshiring.</i>"
+        )
+    elif counted_posts_count == 0:
+        reach_comment = (
+            "\n<i>Qidiruv oynasida tasdiqlangan repost topilmadi. "
+            "Bot a'zo kanallardagina qidiriladi.</i>"
+        )
+    else:
+        reach_comment = ""
+
+    notes_section = f"\n📋 <i>{notes}</i>" if notes else ""
+
     return (
         "📊 <b>TASDIQLANGAN QAMROV HISOBOTI</b>\n\n"
         f"🔗 Manba: {post_url}\n"
-        f"👁 Original ko'rishlar: {source_views:,}\n"
-        f"📢 Tasdiqlangan tarqalishlar: {counted_posts_count} ta\n"
-        f"➕ Ularning ko'rishlari: {confirmed_secondary_views:,}\n\n"
-        f"<b>JAMI TASDIQLANGAN QAMROV: {total_confirmed_reach:,}</b>\n\n"
+        f"📌 Holat: {status_label}\n\n"
+        f"👁 Original ko'rishlar: <b>{source_views:,}</b>\n"
+        f"📢 Tasdiqlangan tarqalishlar: <b>{counted_posts_count} ta</b>\n"
+        f"➕ Ikkilamchi ko'rishlar: <b>{confirmed_secondary_views:,}</b>\n\n"
+        f"<b>JAMI TASDIQLANGAN QAMROV: {total_confirmed_reach:,}</b>\n"
+        f"{reach_comment}\n"
         f"⏭ O'tkazib yuborilganlar: {skipped_posts_count} ta\n"
-        f"🕐 Hisoblash vaqti: {finished_at}\n\n"
-        "<i>Faqat mavjud va tasdiqlangan ma'lumotlar asosida hisoblandi.</i>"
+        f"🕐 Hisoblash vaqti: {finished_at}"
+        f"{notes_section}\n\n"
+        "<i>Faqat Telethon akkaunti a'zo bo'lgan kanallarda qidiriladigan "
+        "tasdiqlangan ma'lumotlar asosida hisoblandi.</i>"
     )
 
 
@@ -75,11 +105,13 @@ def format_detected_post_line(
     views_count,
     confirmation_type,
     skip_reason,
+    discovery_method: str = "",
 ) -> str:
     views_str = f"{views_count:,} ko'rish" if views_count else "ko'rishlar yo'q"
     url_str = post_url or "URL yo'q"
+    method_str = f" [{discovery_method}]" if discovery_method else ""
     if status == "COUNTED":
-        return f"[COUNTED] {url_str} — {views_str} | {confirmation_type}"
+        return f"✅ {url_str} — {views_str} | {confirmation_type}{method_str}"
     else:
         reason = skip_reason or status
-        return f"[{status}] {url_str} — {reason}"
+        return f"⏭ [{status}] {url_str} — {reason}"

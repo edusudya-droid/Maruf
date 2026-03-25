@@ -25,6 +25,9 @@ class DetectedPostRepo:
         confirmation_type: Optional[str] = None,
         skip_reason: Optional[str] = None,
         text_similarity_score: Optional[float] = None,
+        discovery_method: Optional[str] = None,
+        channel_username: Optional[str] = None,
+        raw_metadata: Optional[str] = None,
     ) -> DetectedPost:
         dp = DetectedPost(
             analysis_run_id=analysis_run_id,
@@ -40,6 +43,9 @@ class DetectedPostRepo:
             status=status,
             skip_reason=skip_reason,
             text_similarity_score=text_similarity_score,
+            discovery_method=discovery_method,
+            channel_username=channel_username,
+            raw_metadata=raw_metadata,
         )
         self.session.add(dp)
         await self.session.flush()

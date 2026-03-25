@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import List, Optional
 
@@ -5,6 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from infrastructure.database.models import OfficialChannel, SourcePost
+
+logger = logging.getLogger(__name__)
 
 
 class PostRepo:
@@ -80,10 +83,19 @@ class PostRepo:
     ) -> SourcePost:
         existing = await self.get_by_message_id(official_channel_id, telegram_message_id)
         if existing:
-            existing.views_count = views_count
+            # views_count — har doim yangilash (Telethon so'nggi qiymatni beradi)
+            if views_count is not None:
+                existing.views_count = views_count
+            # Matn bo'sh bo'lsa va yangi matn kelsa — yangilaymiz
+            if post_text and not existing.post_text:
+                existing.post_text = post_text
+                logger.debug(
+                    "post_text yangilandi: message_id=%s", telegram_message_id
+                )
             existing.collected_at = collected_at
             await self.session.flush()
             return existing
+
         post = SourcePost(
             official_channel_id=official_channel_id,
             telegram_message_id=telegram_message_id,
@@ -96,4 +108,9 @@ class PostRepo:
         self.session.add(post)
         await self.session.flush()
         await self.session.refresh(post)
+        logger.info(
+            "Yangi post saqlandi: message_id=%s, views=%s",
+            telegram_message_id,
+            views_count,
+        )
         return post

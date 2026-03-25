@@ -122,6 +122,9 @@ class DetectedPost(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     skip_reason: Mapped[Optional[str]] = mapped_column(String(100))
     text_similarity_score: Mapped[Optional[Decimal]] = mapped_column(Numeric(5, 4))
+    discovery_method: Mapped[Optional[str]] = mapped_column(String(50))
+    channel_username: Mapped[Optional[str]] = mapped_column(String(255))
+    raw_metadata: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now(), onupdate=func.now()
