@@ -1,6 +1,13 @@
-version: '3.8'
-
 services:
+  migrator:
+    build: .
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    command: alembic upgrade head
+    restart: "no"
+
   bot:
     build: .
     env_file: .env
@@ -9,6 +16,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     restart: always
     command: python -m bot.main
 
@@ -21,6 +30,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
+    restart: always
+
+  beat:
+    build: .
+    command: celery -A workers.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      migrator:
+        condition: service_completed_successfully
     restart: always
 
   db:

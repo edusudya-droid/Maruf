@@ -90,7 +90,9 @@ class AnalysisRun(Base):
     finished_at: Mapped[Optional[datetime]] = mapped_column(nullable=True)
     source_views: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     confirmed_secondary_views: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    total_confirmed_reach: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    # Переименовано: total_confirmed_reach -> total_observed_views
+    # Причина: это не уникальный охват, а сумма наблюдаемых просмотров.
+    total_observed_views: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     counted_posts_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     skipped_posts_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     notes: Mapped[Optional[str]] = mapped_column(Text)

@@ -59,7 +59,8 @@ class AnalysisRepo:
     async def update_status(self, run_id: int, status: str) -> None:
         values: dict = {"status": status}
         if status in ("COMPLETED", "COMPLETED_WITH_SKIPS", "FAILED"):
-            values["finished_at"] = datetime.utcnow()
+            # Используем naive UTC — БД хранит TIMESTAMP WITHOUT TIME ZONE
+            values["finished_at"] = datetime.now(timezone.utc).replace(tzinfo=None)
         await self.session.execute(
             update(AnalysisRun).where(AnalysisRun.id == run_id).values(**values)
         )
@@ -70,7 +71,7 @@ class AnalysisRepo:
         status: str,
         source_views: int,
         confirmed_secondary_views: int,
-        total_confirmed_reach: int,
+        total_observed_views: int,
         counted_posts_count: int,
         skipped_posts_count: int,
         notes: Optional[str] = None,
@@ -80,10 +81,10 @@ class AnalysisRepo:
             .where(AnalysisRun.id == run_id)
             .values(
                 status=status,
-                finished_at=datetime.utcnow(),
+                finished_at=datetime.now(timezone.utc).replace(tzinfo=None),
                 source_views=source_views,
                 confirmed_secondary_views=confirmed_secondary_views,
-                total_confirmed_reach=total_confirmed_reach,
+                total_observed_views=total_observed_views,
                 counted_posts_count=counted_posts_count,
                 skipped_posts_count=skipped_posts_count,
                 notes=notes,
